@@ -15,6 +15,7 @@ local rshift = bit.rshift
 local band = bit.band
 local bor = bit.bor
 local bxor = bit.bxor
+local strbyte = string.byte
 local LOOKUP_MAX_SIZE = floor(2^18-1)
 local CONST_COMPLETED_FROM_ACHIEVEMENT_VALUE = 63
 
@@ -52,7 +53,7 @@ local CONST_PROVIDER_DATA_RAIDING = 2
 local CONST_PROVIDER_DATA_LIST = { CONST_PROVIDER_DATA_MYTHICPLUS, CONST_PROVIDER_DATA_RAIDING }
 local CONST_PROVIDER_INTERFACE = { MYTHICPLUS = CONST_PROVIDER_DATA_MYTHICPLUS, RAIDING = CONST_PROVIDER_DATA_RAIDING }
 local CONST_PROVIDER_DATA_FIELDS_PER_CHARACTER = {
-	3,	-- Mythic Plus
+	21,	-- Mythic Plus
 	2		-- Raiding
 }
 
@@ -198,6 +199,34 @@ local ORDERED_ROLES = {
 	{ {"tank","partial"}, {"healer","partial"}, },
 	{ {"tank","partial"}, {"healer","partial"}, {"dps","full"}, },
 	{ {"tank","partial"}, {"healer","partial"}, {"dps","partial"}, },
+}
+
+local ENCODER_MYTHICPLUS_FIELDS = {
+	CURRENT_SCORE 				= 1, 	-- current season score
+	CURRENT_ROLES 				= 2, 	-- current season roles
+	PREVIOUS_SCORE 				= 3, 	-- previous season score
+	PREVIOUS_ROLES 				= 4, 	-- previous season roles
+	MAIN_CURRENT_SCORE 		= 5, 	-- main's current season score
+	MAIN_CURRENT_ROLES		= 6, 	-- main's current season roles
+	MAIN_PREVIOUS_SCORE 	= 7, 	-- main's previous season score
+	MAIN_PREVIOUS_ROLES 	= 8, 	-- main's previous season roles
+	DUNGEON_RUN_COUNTS 		= 9, 	-- number of runs this season for 5+, 10+, 15+, and 20+
+	DUNGEON_LEVELS 				= 10, 	-- dungeon levels and stars for each dungeon completed
+	DUNGEON_BEST_INDEX 		= 11 	-- best dungeon index
+}
+
+local ENCODER_MYTHICPLUS_FIELD_NAMES = {
+	[1] = "CURRENT_SCORE",
+	[2] = "CURRENT_ROLES",
+	[3] = "PREVIOUS_SCORE",
+	[4] = "PREVIOUS_ROLES",
+	[5] = "MAIN_CURRENT_SCORE",
+	[6] = "MAIN_CURRENT_ROLES",
+	[7] = "MAIN_PREVIOUS_SCORE",
+	[8] = "MAIN_PREVIOUS_ROLES",
+	[9] = "DUNGEON_RUN_COUNTS",
+	[10] = "DUNGEON_LEVELS",
+	[11] = "DUNGEON_BEST_INDEX"
 }
 
 -- setup outdated struct
@@ -418,17 +447,17 @@ do
 
 	local CONST_DECODE_BITS4_TABLE = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 25, 50, 100 }
 	function DecodeBits4(value)
-		return CONST_DECODE_BITS4_TABLE[1 + value]
+		return CONST_DECODE_BITS4_TABLE[1 + value] or 0
 	end
 
 	local CONST_DECODE_BITS3_TABLE = { 0, 1, 2, 3, 4, 5, 10, 20 }
 	function DecodeBits3(value)
-		return CONST_DECODE_BITS3_TABLE[1 + value]
+		return CONST_DECODE_BITS3_TABLE[1 + value] or 0
 	end
 
 	local CONST_DECODE_BITS2_TABLE = { 0, 1, 2, 5 }
 	function DecodeBits2(value)
-		return CONST_DECODE_BITS2_TABLE[1 + value]
+		return CONST_DECODE_BITS2_TABLE[1 + value] or 0
 	end
 
 	-- Compare two dungeon first by the keyLevel, then by their short name
@@ -746,103 +775,123 @@ do
 		end
 	end
 
-	local function UnpackMythicPlusCharacterData(data1, data2, data3)
+	-- Params:
+	-- str = string to read from
+	-- strIndex = character offset to start reading from
+	-- bitOffset = number of bits after strIndex to read from
+	-- totalBitsToRead = number of bits to read
+	--
+	-- Returns:
+	-- value: of the `numBits` from the given offset
+	-- offset: new bit offset after reading this field
+	function ReadBitsFromString(str, bitOffset, totalBitsToRead)
+		local value = 0
+		local readOffset = 0
+		local firstByteShift = bitOffset % 8
+		local bytesToRead = ceil((totalBitsToRead + firstByteShift) / 8)
+
+		while readOffset < totalBitsToRead do
+			local byte = strbyte(str, 1 + floor((bitOffset + readOffset) / 8))
+			local bitsRead = 0
+			if readOffset == 0 then
+				if bytesToRead == 1 then
+					local availableBits = totalBitsToRead - readOffset
+					value = band(rshift(byte, firstByteShift), ((lshift(1, availableBits)) - 1))
+					bitsRead = totalBitsToRead
+				else
+					value = rshift(byte, firstByteShift)
+					bitsRead = 8 - firstByteShift
+				end
+			else
+				local availableBits = totalBitsToRead - readOffset
+				if availableBits < 8 then
+					value = value + lshift(band(byte, (lshift(1, availableBits) - 1)), readOffset)
+					bitsRead = bitsRead + availableBits;
+				else
+					value = value + lshift(byte, readOffset)
+					bitsRead = bitsRead + min(8, totalBitsToRead)
+				end
+			end
+			readOffset = readOffset + bitsRead
+		end
+
+		if readOffset ~= totalBitsToRead then
+			DEFAULT_CHAT_FRAME:AddMessage('Read an improper number of bits. Expected ' .. totalBitsToRead .. ' got ' .. readOffset, 0, 0, 1)
+		end
+
+		return value, bitOffset + readOffset
+	end
+
+	local function UnpackMythicPlusCharacterData(encodingOrder, bucket, recordOffset)
 		local results = {}
-		local lo, hi
-		local offset
+		local offset = (recordOffset - 1) * 8
 		local value
-
-		--
-		-- Field 1
-		--
-		lo, hi = Split64BitNumber(data1)
-		offset = 0
-
-		results.currentScore, offset = ReadBits(lo, hi, offset, 12)
-
-		value, offset = ReadBits(lo, hi, offset, 7)
-		results.currentRoleOrdinalIndex = 1 + value			-- indexes are one-based
-
-		value, offset = ReadBits(lo, hi, offset, 4)
-		results.keystoneFivePlus = DecodeBits4(value)
-
-		value, offset = ReadBits(lo, hi, offset, 4)
-		results.keystoneTenPlus = DecodeBits4(value)
-
-		value, offset = ReadBits(lo, hi, offset, 7)
-		results.previousRoleOrdinalIndex = 1 + value			-- indexes are one-based
-
-		results.mainCurrentScore, offset = ReadBits(lo, hi, offset, 12)
-
-		value, offset = ReadBits(lo, hi, offset, 7)
-		results.mainCurrentRoleOrdinalIndex = 1 + value 	-- indexes are one-based
-
-		--
-		-- Field 2
-		--
-		lo, hi = Split64BitNumber(data2)
-		offset = 0
-
-		-- since we do not store score in addon, we need an explicit value indicating which dungeon was the best run
-		-- note: stored as zero-based, so offset it here on load
-		value, offset = ReadBits(lo, hi, offset, 4)
-		results.maxDungeonIndex = 1 + value
-
-		local dungeonIndex = 1
-		results.dungeons = {}
-		results.dungeonUpgrades = {}
-		results.dungeonTimes = {}
-
-		for i = 1, 7 do
-			results.dungeons[dungeonIndex], offset = ReadBits(lo, hi, offset, 5)
-			results.dungeonUpgrades[dungeonIndex], offset = ReadBits(lo, hi, offset, 2)
-
-			-- this is just set so that dungeons will be sorted by key level and number of stars.
-			-- it may be overridden by client data.
-			results.dungeonTimes[dungeonIndex] = 3 - results.dungeonUpgrades[dungeonIndex]
-
-			dungeonIndex = dungeonIndex + 1
+	
+		for encoderIndex = 1, #encodingOrder do
+			local field = encodingOrder[encoderIndex]
+			if field == ENCODER_MYTHICPLUS_FIELDS.CURRENT_SCORE then
+				results.currentScore, offset = ReadBitsFromString(bucket, offset, 12)
+			elseif field == ENCODER_MYTHICPLUS_FIELDS.CURRENT_ROLES then
+				value, offset = ReadBitsFromString(bucket, offset, 7)
+				results.currentRoleOrdinalIndex = 1 + value -- indexes are one-based
+			elseif field == ENCODER_MYTHICPLUS_FIELDS.PREVIOUS_SCORE then
+				results.previousScore, offset = ReadBitsFromString(bucket, offset, 12)
+			elseif field == ENCODER_MYTHICPLUS_FIELDS.PREVIOUS_ROLES then
+				value, offset = ReadBitsFromString(bucket, offset, 7)
+				results.previousRoleOrdinalIndex = 1 + value -- indexes are one-based
+			elseif field == ENCODER_MYTHICPLUS_FIELDS.MAIN_CURRENT_SCORE then
+				results.mainCurrentScore, offset = ReadBitsFromString(bucket, offset, 12)
+			elseif field == ENCODER_MYTHICPLUS_FIELDS.MAIN_CURRENT_ROLES then
+				value, offset = ReadBitsFromString(bucket, offset, 7)
+				results.mainCurrentRoleOrdinalIndex = 1 + value -- indexes are one-based
+			elseif field == ENCODER_MYTHICPLUS_FIELDS.MAIN_PREVIOUS_SCORE then
+				value, offset = ReadBitsFromString(bucket, offset, 9)
+				results.mainPreviousScore = 10 * value
+			elseif field == ENCODER_MYTHICPLUS_FIELDS.MAIN_PREVIOUS_ROLES then
+				value, offset = ReadBitsFromString(bucket, offset, 7)
+				results.mainPreviousRoleOrdinalIndex = 1 + value -- indexes are one-based
+			elseif field == ENCODER_MYTHICPLUS_FIELDS.DUNGEON_RUN_COUNTS then
+				value, offset = ReadBitsFromString(bucket, offset, 4)
+				results.keystoneFivePlus = DecodeBits4(value)
+		
+				value, offset = ReadBitsFromString(bucket, offset, 4)
+				results.keystoneTenPlus = DecodeBits4(value)
+	
+				value, offset = ReadBitsFromString(bucket, offset, 4)
+				results.keystoneFifteenPlus = DecodeBits4(value)
+	
+				value, offset = ReadBitsFromString(bucket, offset, 4)
+				results.keystoneTwentyPlus = DecodeBits4(value)
+			elseif field == ENCODER_MYTHICPLUS_FIELDS.DUNGEON_LEVELS then
+				results.dungeons = {}
+				results.dungeonUpgrades = {}
+				results.dungeonTimes = {}
+		
+				for i = 1, 10 do
+						results.dungeons[i], offset = ReadBitsFromString(bucket, offset, 5)
+	
+						results.dungeonUpgrades[i], offset = ReadBitsFromString(bucket, offset, 2)
+	
+					-- this is just set so that dungeons will be sorted by key level and number of stars.
+					-- it may be overridden by client data.
+					results.dungeonTimes[i] = 3 - results.dungeonUpgrades[i]
+				end
+			elseif field == ENCODER_MYTHICPLUS_FIELDS.DUNGEON_BEST_INDEX then
+				-- since we do not store score in addon, we need an explicit value indicating which dungeon was the best run
+				-- note: stored as zero-based, so offset it here on load
+				value, offset = ReadBitsFromString(bucket, offset, 4)
+				results.maxDungeonIndex = 1 + value
+			else
+				DEFAULT_CHAT_FRAME:AddMessage('Unexpected field ' .. field, 0, 1, 0)
+			end
 		end
-
-		--
-		-- Field 3
-		--
-		lo, hi = Split64BitNumber(data3)
-		offset = 0
-
-		for i = dungeonIndex, 10 do
-			results.dungeons[dungeonIndex], offset = ReadBits(lo, hi, offset, 5)
-			results.dungeonUpgrades[dungeonIndex], offset = ReadBits(lo, hi, offset, 2)
-
-			-- this is just set so that dungeons will be sorted by key level and number of stars.
-			-- it may be overridden by client data.
-			results.dungeonTimes[dungeonIndex] = 3 - results.dungeonUpgrades[dungeonIndex]
-
-			dungeonIndex = dungeonIndex + 1
-		end
-
-		value, offset = ReadBits(lo, hi, offset, 4)
-		results.keystoneFifteenPlus = DecodeBits4(value)
-
-		value, offset = ReadBits(lo, hi, offset, 3)
-		results.keystoneTwentyPlus = DecodeBits3(value)
-
-		value, offset = ReadBits(lo, hi, offset, 9)
-		results.previousScore = 10 * value
-
-		-- main previous season
-		value, offset = ReadBits(lo, hi, offset, 7)
-		results.mainPreviousRoleOrdinalIndex = 1 + value		-- indexes are one-based
-
-		value, offset = ReadBits(lo, hi, offset, 9)
-		results.mainPreviousScore = 10 * value
-
+	
 		-- Post processing
 		if results.maxDungeonIndex > #results.dungeons then
 			results.maxDungeonIndex = 1
 		end
 		results.maxDungeonLevel = results.dungeons[results.maxDungeonIndex]
-
+	
 		return results
 	end
 
@@ -944,7 +993,7 @@ do
 	end
 
 	-- caches the profile table and returns one using keys
-	local function CacheMythicPlusProviderData(dataProviderGroup, name, realm, faction, index, data1, data2, data3)
+	local function CacheMythicPlusProviderData(dataProviderGroup, name, realm, faction, index, bucket, baseOffset)
 		local cache = profileCache[index]
 
 		-- prefer to re-use cached profiles
@@ -953,7 +1002,7 @@ do
 		end
 
 		-- unpack the payloads into these tables
-		local payload = UnpackMythicPlusCharacterData(data1, data2, data3)
+		local payload = UnpackMythicPlusCharacterData(dataProviderGroup.encodingOrder, bucket, baseOffset)
 
 		-- TODO: can we make this table read-only? raw methods will bypass metatable restrictions we try to enforce
 		-- build this custom table in order to avoid users tainting the provider database
@@ -1149,7 +1198,7 @@ do
 						base = 1 + base - (bucketID - 1) * lookupMaxSize
 						if bucket then
 							if dataType == CONST_PROVIDER_DATA_MYTHICPLUS then
-								return CacheMythicPlusProviderData(dataProviderGroup, name, realm, i, i .. "-" .. bucketID .. "-" .. base, bucket[base], bucket[base + 1], bucket[base + 2])
+								return CacheMythicPlusProviderData(dataProviderGroup, name, realm, i, i .. "-" .. bucketID .. "-" .. base, bucket, base)
 							elseif dataType == CONST_PROVIDER_DATA_RAIDING then
 								return CacheRaidingProviderData(dataProviderGroup, name, realm, i, i .. "-" .. bucketID .. "-" .. base, bucket[base], bucket[base + 1])
 							end
