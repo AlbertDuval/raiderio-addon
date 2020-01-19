@@ -30,7 +30,7 @@ local PLAYER_FACTION
 local PLAYER_REGION
 
 -- db outdated
-local IS_DB_OUTDATED = {}
+local DB_OUTDATED = {}
 local OUTDATED_DAYS = {}
 local OUTDATED_HOURS = {}
 local INVALID_DATA_MESSAGE_SENT = false
@@ -204,7 +204,7 @@ local ORDERED_ROLES = {
 do
 	for i = 1, #CONST_PROVIDER_DATA_LIST do
 		local dataType = CONST_PROVIDER_DATA_LIST[i]
-		IS_DB_OUTDATED[dataType] = {}
+		DB_OUTDATED[dataType] = {}
 		OUTDATED_DAYS[dataType] = {}
 		OUTDATED_HOURS[dataType] = {}
 	end
@@ -240,7 +240,8 @@ end
 
 -- defined constants
 local MAX_LEVEL = MAX_PLAYER_LEVEL_TABLE[LE_EXPANSION_BATTLE_FOR_AZEROTH]
-local OUTDATED_SECONDS = 86400 * 3 -- number of seconds before we start warning about outdated data
+local SOFT_OUTDATED_SECONDS = 86400 * 3 -- number of seconds before we start warning about outdated data
+local HARD_OUTDATED_SECONDS = 86400 * 5 -- number of seconds before we hide the data
 local PREVIOUS_SEASON_ID = 2
 local CURRENT_SEASON_ID = 3
 local FACTION
@@ -1579,7 +1580,7 @@ do
 			end
 
 			if addFooter then
-				if IS_DB_OUTDATED[dataType][profile.faction] then
+				if DB_OUTDATED[dataType][profile.faction] then
 					output[i] = {format(L.OUTDATED_DATABASE, OUTDATED_DAYS[dataType][profile.faction]), "", 1, 1, 1, 1, 1, 1, false}
 					i = i + 1
 				end
@@ -1692,6 +1693,10 @@ do
 
 			-- establish faction for the lookups
 			local faction = type(queryFaction) == "number" and queryFaction or GetFaction(unit)
+
+			if DB_OUTDATED[CONST_PROVIDER_DATA_MYTHICPLUS][faction] == "hard" or DB_OUTDATED[CONST_PROVIDER_DATA_RAIDING][faction] == "hard" then
+				return
+			end
 
 			-- retrieve data from the various data types
 			local profile = {}
@@ -1837,6 +1842,18 @@ do
 			-- setup the re-usable table for this tooltips args cache for future updates
 			tooltipArgs[tooltip] = {}
 		end
+
+		local name, realm, unit = GetNameAndRealm(unitOrNameOrNameAndRealm, realmOrNil)
+		local faction = type(factionOrNil) == "number" and factionOrNil or GetFaction(unit)
+		if faction and (DB_OUTDATED[CONST_PROVIDER_DATA_RAIDING][faction] == "hard" or DB_OUTDATED[CONST_PROVIDER_DATA_MYTHICPLUS][faction] == "hard") then
+			tooltip:AddLine(" ", 1, 0.85, 0, false)
+			tooltip:AddLine("Raider.IO is using data that is too old", 1, 0.85, 0, false)
+			tooltip:AddLine("Please update the addon", 1, 0.85, 0, false)
+
+			tooltip:Show()
+			return true
+		end
+
 		-- get the player profile
 		local profile, hasProfile, isCached, multipleProviders = GetPlayerProfile(outputFlag, unitOrNameOrNameAndRealm, realmOrNil, factionOrNil, regionOrNil, arg1, ...)
 		-- sanity check
@@ -2002,10 +2019,15 @@ do
 		-- find elapsed seconds since database update and account for the timezone offset
 		local diff = time() - ts - offset
 		-- figure out of the DB is outdated or not by comparing to our threshold
-		local isOutdated = diff >= OUTDATED_SECONDS
+		local outdated = false
+		if diff >= HARD_OUTDATED_SECONDS then
+			outdated = 'hard'
+		elseif diff >= SOFT_OUTDATED_SECONDS then
+			outdated = 'soft'
+		end
 		local outdatedHours = floor(diff/ 3600 + 0.5)
 		local outdatedDays = floor(diff / 86400 + 0.5)
-		return isOutdated, outdatedHours, outdatedDays
+		return outdated, outdatedHours, outdatedDays
 	end
 
 	-- we have logged in and character data is available
@@ -2047,8 +2069,8 @@ do
 
 				if data.region == PLAYER_REGION then
 					-- is the provider up to date?
-					local isOutdated, outdatedHours, outdatedDays = IsProviderOutdated(data)
-					IS_DB_OUTDATED[dataType][data.faction] = isOutdated
+					local dbOutdated, outdatedHours, outdatedDays = IsProviderOutdated(data)
+					DB_OUTDATED[dataType][data.faction] = dbOutdated
 					OUTDATED_HOURS[dataType][data.faction] = outdatedHours
 					OUTDATED_DAYS[dataType][data.faction] = outdatedDays
 
@@ -2762,7 +2784,7 @@ do
 		end
 		DropDownList1:HookScript("OnShow", OnShow)
 		DropDownList1:HookScript("OnHide", OnHide)
-		
+
 		-- https://github.com/Gethe/wow-ui-source/commit/356d028f9d245f6e75dc8a806deb3c38aa0aa77f#diff-4c5ca6424de48e2c9b959163c421d767R1145
 		local originalFunction = UIDropDownMenu_HandleGlobalMouseEvent
 		UIDropDownMenu_HandleGlobalMouseEvent = function (button, event)
@@ -2774,7 +2796,7 @@ do
 
 			originalFunction(button, event)
 		end
-		
+
 		return 1
 	end
 
@@ -2901,7 +2923,7 @@ end
 do
 	ns.LFD_ACTIVITYID_TO_DUNGEONID = LFD_ACTIVITYID_TO_DUNGEONID
 	ns.CONST_DUNGEONS = CONST_DUNGEONS
-	ns.IS_DB_OUTDATED = IS_DB_OUTDATED
+	ns.DB_OUTDATED = DB_OUTDATED
 	ns.OUTDATED_DAYS = OUTDATED_DAYS
 	ns.OUTDATED_HOURS = OUTDATED_HOURS
 	ns.RAID_DIFFICULTY_NAMES = RAID_DIFFICULTY_NAMES
@@ -2911,6 +2933,7 @@ do
 	ns.CompareDungeon = CompareDungeon
 	ns.GetDungeonWithData = GetDungeonWithData
 	ns.GetNameAndRealm = GetNameAndRealm
+	ns.GetFaction = GetFaction
 	ns.GetRealmSlug = GetRealmSlug
 	ns.GetStarsForUpgrades = GetStarsForUpgrades
 	ns.ProfileOutput = ProfileOutput
