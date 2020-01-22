@@ -1046,7 +1046,7 @@ do
 			mplusPrevious = {
 				score = payload.previousScore,
 				roles = ORDERED_ROLES[payload.previousRoleOrdinalIndex] or ORDERED_ROLES[1],
-				season = payload.previousScoreSeason
+				season = 1 + payload.previousScoreSeason
 			},
 			mplusMainCurrent = {
 				score = payload.mainCurrentScore,
@@ -1055,7 +1055,7 @@ do
 			mplusMainPrevious = {
 				score = payload.mainPreviousScore,
 				roles = ORDERED_ROLES[payload.mainPreviousRoleOrdinalIndex] or ORDERED_ROLES[1],
-				season = payload.mainPreviousScoreSeason
+				season = 1 + payload.mainPreviousScoreSeason
 			},
 			-- dungeons they have completed
 			dungeons = payload.dungeons,
@@ -1396,7 +1396,7 @@ do
 
 			if profile.mplusPrevious.score > profile.mplusCurrent.score then
 				table.insert(lines, {
-					GenerateScoreSeasonLabel(L.PREVIOUS_SCORE, profile.mplusPreviousSeason),
+					GenerateScoreSeasonLabel(L.PREVIOUS_SCORE, profile.mplusPrevious.season),
 					GetTooltipScore(profile.mplusPrevious, true),
 					1, 1, 1,
 					GetPreviousScoreColor(profile.mplusPrevious.score)
@@ -1414,7 +1414,7 @@ do
 
 				if profile.mplusPrevious.score > profile.mplusCurrent.score then
 					table.insert(lines, {
-						GenerateScoreSeasonLabel(L.PREVIOUS_SCORE, profile.mplusPreviousSeason),
+						GenerateScoreSeasonLabel(L.PREVIOUS_SCORE, profile.mplusPrevious.season),
 						GetTooltipScore(profile.mplusPrevious, true),
 						1, 1, 1,
 						GetPreviousScoreColor(profile.mplusPrevious.score)
@@ -1424,7 +1424,7 @@ do
 				if profile.mplusPrevious.score > profile.mplusCurrent.score then
 					-- headline
 					table.insert(lines, {
-						GenerateScoreSeasonLabel(L.RAIDERIO_MP_BEST_SCORE, profile.mplusPreviousSeason),
+						GenerateScoreSeasonLabel(L.RAIDERIO_MP_BEST_SCORE, profile.mplusPrevious.season),
 						GetTooltipScore(profile.mplusPrevious, true),
 						1, 0.85, 0,
 						GetPreviousScoreColor(profile.mplusPrevious.score)
@@ -1460,7 +1460,7 @@ do
 
 				if profile.mplusPrevious.score > profile.mplusCurrent.score then
 					table.insert(lines, {
-						GenerateScoreSeasonLabel(L.PREVIOUS_SCORE, profile.mplusPreviousSeason),
+						GenerateScoreSeasonLabel(L.PREVIOUS_SCORE, profile.mplusPrevious.season),
 						GetTooltipScore(profile.mplusPrevious, true),
 						keyColor[1], keyColor[2], keyColor[3],
 						GetPreviousScoreColor(profile.mplusPrevious.score)
@@ -1534,7 +1534,7 @@ do
 							if profile.mplusMainCurrent.score < profile.mplusMainPrevious.score then
 								displayedPreviousSeason = true
 								output[i] = {
-									format(L.MAINS_BEST_SCORE_BEST_SEASON, L["SEASON_LABEL_" .. profile.mplusMainPreviousSeason]),
+									format(L.MAINS_BEST_SCORE_BEST_SEASON, L["SEASON_LABEL_" .. profile.mplusMainPrevious.season]),
 									GetTooltipScore(profile.mplusMainPrevious, true),
 									1, 1, 1,
 									GetPreviousScoreColor(profile.mplusMainPrevious.score)
