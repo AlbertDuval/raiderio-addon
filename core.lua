@@ -448,7 +448,7 @@ do
 		if value < 10 then
 			return value
 		else
-			return 10 + min(floor((num - 10) / 5))
+			return 10 + (value - 10) * 5
 		end
 	end
 
