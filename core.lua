@@ -822,45 +822,45 @@ do
 		return value, bitOffset + readOffset
 	end
 
-	local function UnpackMythicPlusCharacterData(encodingOrder, bucket, recordOffset)
+	local function UnpackMythicPlusCharacterData(encodingOrder, bucket, baseOffset)
 		local results = {}
-		local offset = (recordOffset - 1) * 8
+		local bitOffset = (baseOffset - 1) * 8
 		local value
 	
 		for encoderIndex = 1, #encodingOrder do
 			local field = encodingOrder[encoderIndex]
 			if field == ENCODER_MYTHICPLUS_FIELDS.CURRENT_SCORE then
-				results.currentScore, offset = ReadBitsFromString(bucket, offset, 12)
+				results.currentScore, bitOffset = ReadBitsFromString(bucket, bitOffset, 12)
 			elseif field == ENCODER_MYTHICPLUS_FIELDS.CURRENT_ROLES then
-				value, offset = ReadBitsFromString(bucket, offset, 7)
+				value, bitOffset = ReadBitsFromString(bucket, bitOffset, 7)
 				results.currentRoleOrdinalIndex = 1 + value -- indexes are one-based
 			elseif field == ENCODER_MYTHICPLUS_FIELDS.PREVIOUS_SCORE then
-				results.previousScore, offset = ReadBitsFromString(bucket, offset, 12)
+				results.previousScore, bitOffset = ReadBitsFromString(bucket, bitOffset, 12)
 			elseif field == ENCODER_MYTHICPLUS_FIELDS.PREVIOUS_ROLES then
-				value, offset = ReadBitsFromString(bucket, offset, 7)
+				value, bitOffset = ReadBitsFromString(bucket, bitOffset, 7)
 				results.previousRoleOrdinalIndex = 1 + value -- indexes are one-based
 			elseif field == ENCODER_MYTHICPLUS_FIELDS.MAIN_CURRENT_SCORE then
-				results.mainCurrentScore, offset = ReadBitsFromString(bucket, offset, 12)
+				results.mainCurrentScore, bitOffset = ReadBitsFromString(bucket, bitOffset, 12)
 			elseif field == ENCODER_MYTHICPLUS_FIELDS.MAIN_CURRENT_ROLES then
-				value, offset = ReadBitsFromString(bucket, offset, 7)
+				value, bitOffset = ReadBitsFromString(bucket, bitOffset, 7)
 				results.mainCurrentRoleOrdinalIndex = 1 + value -- indexes are one-based
 			elseif field == ENCODER_MYTHICPLUS_FIELDS.MAIN_PREVIOUS_SCORE then
-				value, offset = ReadBitsFromString(bucket, offset, 9)
+				value, bitOffset = ReadBitsFromString(bucket, bitOffset, 9)
 				results.mainPreviousScore = 10 * value
 			elseif field == ENCODER_MYTHICPLUS_FIELDS.MAIN_PREVIOUS_ROLES then
-				value, offset = ReadBitsFromString(bucket, offset, 7)
+				value, bitOffset = ReadBitsFromString(bucket, bitOffset, 7)
 				results.mainPreviousRoleOrdinalIndex = 1 + value -- indexes are one-based
 			elseif field == ENCODER_MYTHICPLUS_FIELDS.DUNGEON_RUN_COUNTS then
-				value, offset = ReadBitsFromString(bucket, offset, 4)
+				value, bitOffset = ReadBitsFromString(bucket, bitOffset, 4)
 				results.keystoneFivePlus = DecodeBits4(value)
 		
-				value, offset = ReadBitsFromString(bucket, offset, 4)
+				value, bitOffset = ReadBitsFromString(bucket, bitOffset, 4)
 				results.keystoneTenPlus = DecodeBits4(value)
 	
-				value, offset = ReadBitsFromString(bucket, offset, 4)
+				value, bitOffset = ReadBitsFromString(bucket, bitOffset, 4)
 				results.keystoneFifteenPlus = DecodeBits4(value)
 	
-				value, offset = ReadBitsFromString(bucket, offset, 4)
+				value, bitOffset = ReadBitsFromString(bucket, bitOffset, 4)
 				results.keystoneTwentyPlus = DecodeBits4(value)
 			elseif field == ENCODER_MYTHICPLUS_FIELDS.DUNGEON_LEVELS then
 				results.dungeons = {}
@@ -868,9 +868,9 @@ do
 				results.dungeonTimes = {}
 		
 				for i = 1, 10 do
-						results.dungeons[i], offset = ReadBitsFromString(bucket, offset, 5)
+						results.dungeons[i], bitOffset = ReadBitsFromString(bucket, bitOffset, 5)
 	
-						results.dungeonUpgrades[i], offset = ReadBitsFromString(bucket, offset, 2)
+						results.dungeonUpgrades[i], bitOffset = ReadBitsFromString(bucket, bitOffset, 2)
 	
 					-- this is just set so that dungeons will be sorted by key level and number of stars.
 					-- it may be overridden by client data.
@@ -879,7 +879,7 @@ do
 			elseif field == ENCODER_MYTHICPLUS_FIELDS.DUNGEON_BEST_INDEX then
 				-- since we do not store score in addon, we need an explicit value indicating which dungeon was the best run
 				-- note: stored as zero-based, so offset it here on load
-				value, offset = ReadBitsFromString(bucket, offset, 4)
+				value, bitOffset = ReadBitsFromString(bucket, bitOffset, 4)
 				results.maxDungeonIndex = 1 + value
 			else
 				DEFAULT_CHAT_FRAME:AddMessage('Unexpected field ' .. field, 0, 1, 0)
@@ -999,6 +999,15 @@ do
 		-- prefer to re-use cached profiles
 		if cache then
 			return cache
+		end
+
+		if dataProviderGroup.recordSizeInBytes ~= CONST_PROVIDER_DATA_FIELDS_PER_CHARACTER[1] then
+			-- some type of mismatch, so return nothing
+			if ns.DEBUG_MODE then
+				DEFAULT_CHAT_FRAME:AddMessage(format('Raider.IO Addon received mismatched MythicPlus recordSizeInBytes. Got %i expected %i. Skipping.',
+					dataProviderGroup.recordSizeInBytes, CONST_PROVIDER_DATA_FIELDS_PER_CHARACTER[1]), 1, 0, 0)
+			end
+			return nil
 		end
 
 		-- unpack the payloads into these tables
@@ -1178,28 +1187,28 @@ do
 			if db and lu then
 				r = db[realm]
 
-				-- temp fix for the apostrophe
-				if realm == 'Ner\'zhul' and not r then
-					r = db['Ner’zhul']
-				end
-				if realm == 'Cho\'gall' and not r then
-					r = db['Cho’gall']
-				end
-
 				if r then
 					d = BinarySearchForName(r, name, 2, #r)
 					if d then
-						-- `r[1]` = offset for this realm's characters in lookup table
-						-- `d` = index of found character in realm list. note: this is offset by two because first index in `r` is an offset, and because lua is 1-base.
-						-- `bucketID` = the index in the lookup table that contains that characters data
-						base = r[1] + (d - 2) * numFieldsPerCharacter
-						bucketID = 1 + floor(base / lookupMaxSize)
-						bucket = lu[bucketID]
-						base = 1 + base - (bucketID - 1) * lookupMaxSize
-						if bucket then
-							if dataType == CONST_PROVIDER_DATA_MYTHICPLUS then
-								return CacheMythicPlusProviderData(dataProviderGroup, name, realm, i, i .. "-" .. bucketID .. "-" .. base, bucket, base)
-							elseif dataType == CONST_PROVIDER_DATA_RAIDING then
+						if dataType == CONST_PROVIDER_DATA_MYTHICPLUS then
+							-- `r[1]` = offset for this realm's characters in lookup table
+							-- `d` = index of found character in realm list. note: this is offset by two because first index in `r` is an offset, and because lua is 1-base.
+							-- `bucketID` = the index in the lookup table that contains that characters data
+							base = 1 + r[1] + (d - 2) * dataProviderGroup.recordSizeInBytes
+							bucketID = 1
+							bucket = lu[bucketID]
+							if bucket then
+								return CacheMythicPlusProviderData(dataProviderGroup, name, realm, i, i .. "-" .. base, bucket, base)
+							end
+						elseif dataType == CONST_PROVIDER_DATA_RAIDING then
+							-- `r[1]` = offset for this realm's characters in lookup table
+							-- `d` = index of found character in realm list. note: this is offset by two because first index in `r` is an offset, and because lua is 1-base.
+							-- `bucketID` = the index in the lookup table that contains that characters data
+							base = r[1] + (d - 2) * numFieldsPerCharacter
+							bucketID = 1 + floor(base / lookupMaxSize)
+							bucket = lu[bucketID]
+							base = 1 + base - (bucketID - 1) * lookupMaxSize
+							if bucket then
 								return CacheRaidingProviderData(dataProviderGroup, name, realm, i, i .. "-" .. bucketID .. "-" .. base, bucket[base], bucket[base + 1])
 							end
 						end
