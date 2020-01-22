@@ -53,7 +53,7 @@ local CONST_PROVIDER_DATA_RAIDING = 2
 local CONST_PROVIDER_DATA_LIST = { CONST_PROVIDER_DATA_MYTHICPLUS, CONST_PROVIDER_DATA_RAIDING }
 local CONST_PROVIDER_INTERFACE = { MYTHICPLUS = CONST_PROVIDER_DATA_MYTHICPLUS, RAIDING = CONST_PROVIDER_DATA_RAIDING }
 local CONST_PROVIDER_DATA_FIELDS_PER_CHARACTER = {
-	21,	-- Mythic Plus
+	24,	-- Mythic Plus
 	2		-- Raiding
 }
 
@@ -270,8 +270,7 @@ end
 -- defined constants
 local MAX_LEVEL = MAX_PLAYER_LEVEL_TABLE[LE_EXPANSION_BATTLE_FOR_AZEROTH]
 local OUTDATED_SECONDS = 86400 * 3 -- number of seconds before we start warning about outdated data
-local PREVIOUS_SEASON_ID = 2
-local CURRENT_SEASON_ID = 3
+local CURRENT_SEASON_ID = 4
 local FACTION
 local REGIONS
 local REGIONS_RESET_TIME
@@ -443,6 +442,19 @@ do
 				return CONST_DUNGEONS[i]
 			end
 		end
+	end
+
+	function DecodeBits6(value)
+		if value < 10 then
+			return value
+		else
+			return 10 + min(floor((num - 10) / 5))
+		end
+	end
+
+	local CONST_DECODE_BITS5_TABLE = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 25, 30, 35, 40, 45, 50,60, 70, 80, 90, 100 }
+	function DecodeBits5(value)
+		return CONST_DECODE_BITS5_TABLE[1 + value] or 0
 	end
 
 	local CONST_DECODE_BITS4_TABLE = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 25, 50, 100 }
@@ -836,6 +848,7 @@ do
 				results.currentRoleOrdinalIndex = 1 + value -- indexes are one-based
 			elseif field == ENCODER_MYTHICPLUS_FIELDS.PREVIOUS_SCORE then
 				results.previousScore, bitOffset = ReadBitsFromString(bucket, bitOffset, 12)
+				results.previousScoreSeason, bitOffset = ReadBitsFromString(bucket, bitOffset, 2)
 			elseif field == ENCODER_MYTHICPLUS_FIELDS.PREVIOUS_ROLES then
 				value, bitOffset = ReadBitsFromString(bucket, bitOffset, 7)
 				results.previousRoleOrdinalIndex = 1 + value -- indexes are one-based
@@ -847,27 +860,28 @@ do
 			elseif field == ENCODER_MYTHICPLUS_FIELDS.MAIN_PREVIOUS_SCORE then
 				value, bitOffset = ReadBitsFromString(bucket, bitOffset, 9)
 				results.mainPreviousScore = 10 * value
+				results.mainPreviousScoreSeason, bitOffset = ReadBitsFromString(bucket, bitOffset, 2)
 			elseif field == ENCODER_MYTHICPLUS_FIELDS.MAIN_PREVIOUS_ROLES then
 				value, bitOffset = ReadBitsFromString(bucket, bitOffset, 7)
 				results.mainPreviousRoleOrdinalIndex = 1 + value -- indexes are one-based
 			elseif field == ENCODER_MYTHICPLUS_FIELDS.DUNGEON_RUN_COUNTS then
-				value, bitOffset = ReadBitsFromString(bucket, bitOffset, 4)
-				results.keystoneFivePlus = DecodeBits4(value)
+				value, bitOffset = ReadBitsFromString(bucket, bitOffset, 6)
+				results.keystoneFivePlus = DecodeBits6(value)
 		
-				value, bitOffset = ReadBitsFromString(bucket, bitOffset, 4)
-				results.keystoneTenPlus = DecodeBits4(value)
+				value, bitOffset = ReadBitsFromString(bucket, bitOffset, 6)
+				results.keystoneTenPlus = DecodeBits6(value)
 	
-				value, bitOffset = ReadBitsFromString(bucket, bitOffset, 4)
-				results.keystoneFifteenPlus = DecodeBits4(value)
+				value, bitOffset = ReadBitsFromString(bucket, bitOffset, 6)
+				results.keystoneFifteenPlus = DecodeBits6(value)
 	
-				value, bitOffset = ReadBitsFromString(bucket, bitOffset, 4)
-				results.keystoneTwentyPlus = DecodeBits4(value)
+				value, bitOffset = ReadBitsFromString(bucket, bitOffset, 6)
+				results.keystoneTwentyPlus = DecodeBits6(value)
 			elseif field == ENCODER_MYTHICPLUS_FIELDS.DUNGEON_LEVELS then
 				results.dungeons = {}
 				results.dungeonUpgrades = {}
 				results.dungeonTimes = {}
 		
-				for i = 1, 10 do
+				for i = 1, 12 do
 						results.dungeons[i], bitOffset = ReadBitsFromString(bucket, bitOffset, 5)
 	
 						results.dungeonUpgrades[i], bitOffset = ReadBitsFromString(bucket, bitOffset, 2)
@@ -1031,7 +1045,8 @@ do
 			},
 			mplusPrevious = {
 				score = payload.previousScore,
-				roles = ORDERED_ROLES[payload.previousRoleOrdinalIndex] or ORDERED_ROLES[1]
+				roles = ORDERED_ROLES[payload.previousRoleOrdinalIndex] or ORDERED_ROLES[1],
+				season = payload.previousScoreSeason
 			},
 			mplusMainCurrent = {
 				score = payload.mainCurrentScore,
@@ -1039,19 +1054,9 @@ do
 			},
 			mplusMainPrevious = {
 				score = payload.mainPreviousScore,
-				roles = ORDERED_ROLES[payload.mainPreviousRoleOrdinalIndex] or ORDERED_ROLES[1]
+				roles = ORDERED_ROLES[payload.mainPreviousRoleOrdinalIndex] or ORDERED_ROLES[1],
+				season = payload.mainPreviousScoreSeason
 			},
-			allScore = 0, 											-- deprecated: refer to mplusCurrent.score
-			mainScore = 0,											-- deprecated: refer to mplusMainCurrent.score
-			dpsScore = 0,												-- deprecated: refer to mplusXYZ.roles to see the roles they have contribution from
-			healScore = 0,											-- deprecated: refer to mplusXYZ.roles to see the roles they have contribution from
-			tankScore = 0,											-- deprecated: refer to mplusXYZ.roles to see the roles they have contribution from
-			season = '',												-- deprecated
-			prevSeason = '',										-- deprecated
-			isPrevAllScore = false,							-- deprecated: use mplusPrevious.score and mplusCurrent.score independently
-			isFivePlusAchievement = false,			-- deprecated
-			isTenPlusAchievement = false,				-- deprecated
-			isFifteenPlusAchievement = false,		-- deprecated
 			-- dungeons they have completed
 			dungeons = payload.dungeons,
 			dungeonUpgrades = payload.dungeonUpgrades,
@@ -1391,7 +1396,7 @@ do
 
 			if profile.mplusPrevious.score > profile.mplusCurrent.score then
 				table.insert(lines, {
-					GenerateScoreSeasonLabel(L.PREVIOUS_SCORE, PREVIOUS_SEASON_ID),
+					GenerateScoreSeasonLabel(L.PREVIOUS_SCORE, profile.mplusPreviousSeason),
 					GetTooltipScore(profile.mplusPrevious, true),
 					1, 1, 1,
 					GetPreviousScoreColor(profile.mplusPrevious.score)
@@ -1409,7 +1414,7 @@ do
 
 				if profile.mplusPrevious.score > profile.mplusCurrent.score then
 					table.insert(lines, {
-						GenerateScoreSeasonLabel(L.PREVIOUS_SCORE, PREVIOUS_SEASON_ID),
+						GenerateScoreSeasonLabel(L.PREVIOUS_SCORE, profile.mplusPreviousSeason),
 						GetTooltipScore(profile.mplusPrevious, true),
 						1, 1, 1,
 						GetPreviousScoreColor(profile.mplusPrevious.score)
@@ -1419,7 +1424,7 @@ do
 				if profile.mplusPrevious.score > profile.mplusCurrent.score then
 					-- headline
 					table.insert(lines, {
-						GenerateScoreSeasonLabel(L.RAIDERIO_MP_BEST_SCORE, PREVIOUS_SEASON_ID),
+						GenerateScoreSeasonLabel(L.RAIDERIO_MP_BEST_SCORE, profile.mplusPreviousSeason),
 						GetTooltipScore(profile.mplusPrevious, true),
 						1, 0.85, 0,
 						GetPreviousScoreColor(profile.mplusPrevious.score)
@@ -1455,7 +1460,7 @@ do
 
 				if profile.mplusPrevious.score > profile.mplusCurrent.score then
 					table.insert(lines, {
-						GenerateScoreSeasonLabel(L.PREVIOUS_SCORE, PREVIOUS_SEASON_ID),
+						GenerateScoreSeasonLabel(L.PREVIOUS_SCORE, profile.mplusPreviousSeason),
 						GetTooltipScore(profile.mplusPrevious, true),
 						keyColor[1], keyColor[2], keyColor[3],
 						GetPreviousScoreColor(profile.mplusPrevious.score)
@@ -1529,7 +1534,7 @@ do
 							if profile.mplusMainCurrent.score < profile.mplusMainPrevious.score then
 								displayedPreviousSeason = true
 								output[i] = {
-									format(L.MAINS_BEST_SCORE_BEST_SEASON, L["SEASON_LABEL_" .. PREVIOUS_SEASON_ID]),
+									format(L.MAINS_BEST_SCORE_BEST_SEASON, L["SEASON_LABEL_" .. profile.mplusMainPreviousSeason]),
 									GetTooltipScore(profile.mplusMainPrevious, true),
 									1, 1, 1,
 									GetPreviousScoreColor(profile.mplusMainPrevious.score)
