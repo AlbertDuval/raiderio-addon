@@ -2698,6 +2698,7 @@ do
 		do
 			local function CopyOnClick()
 				ShowCopyURLPopup(custom.kind, custom.query, custom.bnetChar, custom.bnetFaction)
+				CloseDropDownMenus()
 			end
 			local function UpdateCopyButton()
 				local copy = custom.copy
@@ -2707,12 +2708,6 @@ do
 				text:Show()
 				copy:SetScript("OnClick", CopyOnClick)
 				copy:Show()
-			end
-			local function CustomOnEnter(self) -- UIDropDownMenuTemplates.xml#248
-				UIDropDownMenu_StopCounting(self:GetParent()) -- TODO: this might taint and break like before, but let's try it and observe
-			end
-			local function CustomOnLeave(self) -- UIDropDownMenuTemplates.xml#251
-				UIDropDownMenu_StartCounting(self:GetParent()) -- TODO: this might taint and break like before, but let's try it and observe
 			end
 			local function CustomOnShow(self) -- UIDropDownMenuTemplates.xml#257
 				local p = self:GetParent() or self
@@ -2729,11 +2724,9 @@ do
 			end
 			local function CustomButtonOnEnter(self) -- UIDropDownMenuTemplates.xml#155
 				_G[self:GetName() .. "Highlight"]:Show()
-				CustomOnEnter(self:GetParent())
 			end
 			local function CustomButtonOnLeave(self) -- UIDropDownMenuTemplates.xml#178
 				_G[self:GetName() .. "Highlight"]:Hide()
-				CustomOnLeave(self:GetParent())
 			end
 			custom = CreateFrame("Button", addonName .. "_CustomDropDownList", UIParent, "UIDropDownListTemplate")
 			custom:Hide()
@@ -2745,8 +2738,6 @@ do
 			-- cleanup and modify the default template
 			do
 				custom:SetScript("OnClick", nil)
-				custom:SetScript("OnEnter", CustomOnEnter)
-				custom:SetScript("OnLeave", CustomOnLeave)
 				custom:SetScript("OnUpdate", nil)
 				custom:SetScript("OnShow", CustomOnShow)
 				custom:SetScript("OnHide", nil)
@@ -2835,6 +2826,19 @@ do
 		end
 		DropDownList1:HookScript("OnShow", OnShow)
 		DropDownList1:HookScript("OnHide", OnHide)
+		
+		-- https://github.com/Gethe/wow-ui-source/commit/356d028f9d245f6e75dc8a806deb3c38aa0aa77f#diff-4c5ca6424de48e2c9b959163c421d767R1145
+		local originalFunction = UIDropDownMenu_HandleGlobalMouseEvent
+		UIDropDownMenu_HandleGlobalMouseEvent = function (button, event)
+			if event == "GLOBAL_MOUSE_DOWN" and (button == "LeftButton" or button == "RightButton") then
+				if custom:IsShown() and custom:IsMouseOver() then
+					return
+				end
+			end
+
+			originalFunction(button, event)
+		end
+		
 		return 1
 	end
 
